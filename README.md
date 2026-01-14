@@ -4,48 +4,66 @@ PDF2PPTX is a powerful tool designed to convert PDF documents into editable Powe
 
 ## 🚀 Features
 
-- **High-Resolution Conversion**: Efficiently converts PDF pages to high-quality images using `pdf2image`.
-- **Intelligent Layout Analysis**: Leverages PaddleOCR (PP-Structure) to identify and classify document elements (text, titles, figures, etc.).
-- **Hybrid OCR Strategy**: Automatically detects and OCRs text within region-misclassified "figures", ensuring scanned PDFs become fully editable.
-- **Precise Coordinate Mapping**: Automatically scales pixel coordinates from OCR to PPTX inches for accurate layout reproduction.
-- **Editable Content**: Text blocks are converted into editable PPTX text boxes with heuristic font sizing.
-- **Figure Extraction**: Automatically crops and inserts figures/images into slides.
-- **Modular Architecture**: Easy to extend or swap components (e.g., adding Vision-Language Models like Qwen-VL).
+- **Triple-Layered Reconstruction**: Each slide is built with high fidelity:
+    - **Layer 0 (Background)**: The untouched original PDF page for reference.
+    - **Layer 1 (Cleaned)**: A reconstructed background with text removed via **Local Context Fill** (median color estimation for paper, selective inpainting for graphics).
+    - **Layer 2+ (Text)**: Precisely overlaid editable text boxes.
+- **Precise Typography**: Extracts line-level font heights from OCR to match the original document's font size ratio and proportions.
+- **Intelligent Layout Analysis**: Uses PaddleOCR to distinguish text, titles, and figures with a hybrid fallback for scanned text-in-image extraction.
+- **Robustness & Stability**: Implements XML sanitization and dimension safeguards to eliminate "Repair" prompts in PowerPoint.
+- **Modular Design**: Separates PDF loading, layout extraction, and PPTX building for easy extensibility.
+
+## 🔄 Workflow
+
+```mermaid
+graph TD
+    A[PDF Input] --> B[PDFLoader: Page to Image]
+    B --> C[PaddleLayoutExtractor]
+    C --> D{Layout Analysis}
+    D --> E[Text Regions]
+    D --> F[Figure Regions]
+    F --> G[Deep OCR Fallback]
+    G --> E
+    E --> H[Line-level Feature Extraction]
+    H --> I[Local Context Background Masking]
+    I --> J[Background Inpainting & Smoothing]
+    J --> K[Triple-Layer PPTX Construction]
+    K --> L[Sanitization & Stability Check]
+    L --> M[Editable PPTX Output]
+```
 
 ## 🏗 Project Architecture
 
 ```text
 pdf2pptx/
-├── main.py                # Entry point & CLI
-├── config.py              # Centralized configuration
-├── requirements.txt       # Python dependencies
+├── main.py                # Orchestrator & CLI
+├── config.py              # Settings (DPI, Lang, Temp)
+├── requirements.txt       # Dependencies
 └── core/
-    ├── loader.py          # PDF to Image conversion
-    ├── extractor.py       # OCR and Layout extraction logic
-    └── builder.py         # PPTX construction and coordinate scaling
+    ├── loader.py          # PDF parsing (pdf2image)
+    ├── extractor.py       # OCR, Layout & Cleaning (PaddleOCR, OpenCV)
+    └── builder.py         # PPTX construction (python-pptx)
 ```
 
 ## 🛠 Prerequisites
 
-### System Dependencies (Poppler)
+### System Dependencies
 The tool requires `poppler-utils` for PDF processing.
 
 ```bash
-conda create -n pdf2pptx  -c conda-forge poppler pip python=3.12 -y
+conda create -n pdf2pptx -c conda-forge poppler pip python=3.12 -y
 conda activate pdf2pptx
 ```
 
 ## 📦 Installation
 
-1. Clone or download this project.
-2. Install the required Python libraries:
+1. Clone the repository.
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
 ## 🖥 Usage
-
-Run the converter from the command line:
 
 ```bash
 python main.py <input_pdf_path> <output_pptx_path>
@@ -58,10 +76,11 @@ python main.py test.pdf output.pptx
 
 ## ⚙ Configuration
 
-Settings can be adjusted in `config.py`:
-- `OCR_LANG`: Set to your preferred language (e.g., 'en', 'ch').
-- `DPI`: Adjust image resolution for OCR (default is 300).
-- `TEMP_DIR`: Path for temporary assets during processing.
+Settings in `config.py`:
+- `OCR_LANG`: Language code (e.g., 'en', 'ch').
+- `DPI`: Image resolution for OCR (default: 300).
+- `TEMP_DIR`: Asset cache directory.
 
 ## ⚖ License
-This project is open-source and available under the MIT License.
+MIT License
+
