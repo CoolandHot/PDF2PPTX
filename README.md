@@ -45,23 +45,13 @@ pdf2pptx/
     └── builder.py         # PPTX construction (python-pptx)
 ```
 
-## 🛠 Prerequisites
-
-### System Dependencies
-The tool requires `poppler-utils` for PDF processing.
-
-```bash
-conda create -n pdf2pptx -c conda-forge poppler pip python=3.12 -y
-conda activate pdf2pptx
-```
 
 ## 📦 Installation
 
-1. Clone the repository.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+conda env create -f environment.yml
+conda activate pdf2pptx
+```
 
 ## 🖥 Usage
 
