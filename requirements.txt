@@ -1,0 +1,9 @@
+pdf2image
+paddlepaddle==2.6.2
+paddleocr==2.7.0
+python-pptx
+Pillow
+opencv-python
+numpy
+paddleclas
+scipy
