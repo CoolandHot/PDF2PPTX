@@ -31,13 +31,14 @@ def main():
     for i, image in enumerate(images):
         print(f"--- Processing Page {i+1}/{len(images)} ---")
         
-        # Extract Layout (Text + Bounding Boxes + Types + Cleaned Image)
+        # Extract Layout (Elements + Original Image + Cleaned Image)
         result = extractor.extract(image)
         elements = result['elements']
+        original_image = result['original_image']
         cleaned_image = result['cleaned_image']
         
-        # Build Slide
-        builder.create_slide(image, elements, cleaned_image, page_num=i)
+        # Build Slide (Triple Layered: Original -> Cleaned -> Text)
+        builder.create_slide(original_image, elements, cleaned_image, page_num=i)
 
     # 4. Save and Clean
     builder.save(args.output_pptx)

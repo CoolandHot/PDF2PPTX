@@ -7,3 +7,7 @@ opencv-python
 numpy
 paddleclas
 scipy
+faiss-cpu
+easydict
+gast==0.3.3
+visualdl

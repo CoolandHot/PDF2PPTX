@@ -34,64 +34,60 @@ class PaddleLayoutExtractor(BaseLayoutExtractor):
         cleaned = img_np.copy()
         mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Sort elements by size (descending) to handle overlapping bboxes better if any
-        # though usually they are distinct.
         text_elements = [e for e in elements if e['type'] in ['text', 'title', 'header', 'footer']]
         
         for elem in text_elements:
             x1, y1, x2, y2 = map(int, elem['bbox'])
             
-            # 1. Dilation: Increase the bbox slightly to capture anti-aliased edges
-            # At 300 DPI, 4-6 pixels is usually sufficient.
-            dilation = 5
+            # 1. Increased Dilation: Aggressively capture anti-aliasing (8px at 300DPI)
+            dilation = 8
             dx1, dy1 = max(0, x1 - dilation), max(0, y1 - dilation)
             dx2, dy2 = min(w, x2 + dilation), min(h, y2 + dilation)
             
-            # 2. Context Analysis: Look at the neighborhood around the dilated bbox
-            context_pad = 12
+            # 2. Context Analysis
+            context_pad = 15
             cx1, cy1 = max(0, dx1 - context_pad), max(0, dy1 - context_pad)
             cx2, cy2 = min(w, dx2 + context_pad), min(h, dy2 + context_pad)
             
-            # Extract neighborhood (ring)
-            # We take the larger context block and subtract the dilated text block
-            context_block = img_np[cy1:cy2, cx1:cx2]
+            top_strip = img_np[cy1:dy1, cx1:cx2]
+            bot_strip = img_np[dy2:cy2, cx1:cx2]
+            lft_strip = img_np[dy1:dy2, cx1:dx1]
+            rgt_strip = img_np[dy1:dy2, dx2:cx2]
             
-            if context_block.size > 0:
-                # Calculate color statistics
-                # We use a median filter on the context to find dominant background color
-                # Avoiding the center (text) by slicing parts of the ring
-                # Top, bottom, left, right strips
-                top_strip = img_np[cy1:dy1, cx1:cx2]
-                bot_strip = img_np[dy2:cy2, cx1:cx2]
-                lft_strip = img_np[dy1:dy2, cx1:dx1]
-                rgt_strip = img_np[dy1:dy2, dx2:cx2]
+            ring_pixels = []
+            for strip in [top_strip, bot_strip, lft_strip, rgt_strip]:
+                if strip.size > 0:
+                    ring_pixels.append(strip.reshape(-1, 3))
+            
+            if ring_pixels:
+                all_ring = np.concatenate(ring_pixels, axis=0)
+                median_color = np.median(all_ring, axis=0)
+                std_dev = np.std(all_ring, axis=0)
                 
-                ring_pixels = []
-                for strip in [top_strip, bot_strip, lft_strip, rgt_strip]:
-                    if strip.size > 0:
-                        ring_pixels.append(strip.reshape(-1, 3))
-                
-                if ring_pixels:
-                    all_ring = np.concatenate(ring_pixels, axis=0)
-                    median_color = np.median(all_ring, axis=0)
-                    std_dev = np.std(all_ring, axis=0)
-                    
-                    # 3. Decision: Simple Fill vs Inpaint
-                    # If std_dev is low, it's a solid background (paper)
-                    # threshold 15 is fairly safe for document backgrounds
-                    if np.mean(std_dev) < 18:
-                        cv2.rectangle(cleaned, (dx1, dy1), (dx2, dy2), median_color.tolist(), -1)
-                    else:
-                        # Complex background (image/gradient), mark for inpainting
-                        cv2.rectangle(mask, (dx1, dy1), (dx2, dy2), 255, -1)
+                # 3. Decision: Simple Fill vs Inpaint
+                if np.mean(std_dev) < 20:
+                    cv2.rectangle(cleaned, (dx1, dy1), (dx2, dy2), median_color.tolist(), -1)
+                    # Add to mask for a light smoothing pass later
+                    cv2.rectangle(mask, (dx1, dy1), (dx2, dy2), 255, -1)
+                else:
+                    cv2.rectangle(mask, (dx1, dy1), (dx2, dy2), 255, -1)
 
-        # 4. Final Inpainting Pass for complex regions
+        # 4. Final Inpainting Pass
         if np.any(mask):
-            # INPAINT_NS is often better for preserving sharp edges in documents
             cleaned = cv2.inpaint(cleaned, mask, inpaintRadius=3, flags=cv2.INPAINT_NS)
             
+            # 5. Smoothing Pass (Blend edges)
+            # Create a blurred version of the cleaned image
+            blurred = cv2.GaussianBlur(cleaned, (5, 5), 0)
+            # Use a slightly dilated version of the mask edges to blend
+            edge_mask = cv2.Canny(mask, 100, 200)
+            edge_mask = cv2.dilate(edge_mask, np.ones((3, 3), np.uint8), iterations=1)
+            edge_mask_3d = cv2.merge([edge_mask, edge_mask, edge_mask]) / 255.0
+            
+            # Blend blurred edges into cleaned image
+            cleaned = (cleaned * (1 - edge_mask_3d) + blurred * edge_mask_3d).astype(np.uint8)
+            
         return Image.fromarray(cleaned)
-
 
     def extract(self, image: Image.Image) -> Dict[str, Any]:
         img_np = np.array(image)
@@ -124,7 +120,8 @@ class PaddleLayoutExtractor(BaseLayoutExtractor):
                             extracted_elements.append({
                                 'type': 'text',
                                 'bbox': [x1 + lx1, y1 + ly1, x1 + lx2, y1 + ly2],
-                                'content': text
+                                'content': text,
+                                'font_size_px': (ly2 - ly1)
                             })
                     else:
                         extracted_elements.append({
@@ -133,23 +130,33 @@ class PaddleLayoutExtractor(BaseLayoutExtractor):
                             'content': None
                         })
             else:
-                # Standard text block
-                text_lines = [line['text'] for line in region.get('res', [])]
-                content = "\n".join(text_lines)
-                if content.strip():
+                # Standard text block from PP-Structure
+                # We split these into individual lines to match font sizes more accurately
+                for line in region.get('res', []):
+                    text = line.get('text', '')
+                    if not text.strip(): continue
+                    
+                    l_region = np.array(line.get('text_region'))
+                    lx1, ly1 = np.min(l_region, axis=0)
+                    lx2, ly2 = np.max(l_region, axis=0)
+                    
                     extracted_elements.append({
                         'type': r_type,
-                        'bbox': bbox,
-                        'content': content
+                        'bbox': [lx1, ly1, lx2, ly2],
+                        'content': text,
+                        'font_size_px': (ly2 - ly1)
                     })
+
 
         # Generate cleaned image (text removed)
         cleaned_image = self._clean_image(img_np, extracted_elements)
 
         return {
             'elements': extracted_elements,
+            'original_image': image,
             'cleaned_image': cleaned_image
         }
+
 
 class QwenVLExtractor(BaseLayoutExtractor):
     def extract(self, image: Image.Image) -> Dict[str, Any]:
